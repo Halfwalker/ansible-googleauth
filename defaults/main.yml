@@ -1,0 +1,42 @@
+---
+
+# User can be overridden by a vault variable or from hosts file entry or ansible cmdline
+username: "{{ vault_username | default(ansible_user_id) }}"
+
+# Use google authenticator config from vault if it's there
+# 1st line secret can be 16 or 26 chars
+# vault_google_auth_config:
+#   - name: host1.example.com
+#     force_auth: false
+#     secret: |
+#       6DRWZ2AWOAFAQMSI
+#       "RATE_LIMIT 3 30
+#       " WINDOW_SIZE 3
+#       " DISALLOW_REUSE
+#       " TOTP_AUTH
+#       36011504
+#       52878834
+#       36710801
+#       23387673
+#       16670568
+#   - name: hosty.somewhere.com
+#     force_auth: false
+#     secret: |
+#       MVXECANUVTIQ2647HK3S35FM3A
+#       " RATE_LIMIT 3 30 1734051365
+#       " DISALLOW_REUSE 57801712
+#       " TOTP_AUTH
+#       17029728
+#       27355189
+#       27432004
+#       50794981
+#       18624382
+google_auth_config: "{{ vault_google_auth_config | default('NEW') }}"
+
+# Force use of token even with SSH key
+google_auth_force: false
+
+google_auth_packages:
+  - libpam-google-authenticator
+  - python3-qrcode
+  - qrencode

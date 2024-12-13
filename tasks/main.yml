@@ -1,0 +1,178 @@
+---
+
+# ✅  Existing local file   vault secret
+# ✅  Existing local file   no vault
+# ✅  No local file         vault secret
+# ✅  No local file         no vault
+
+# Sets up google authenticator and integrates with login
+
+# Ensure we have the user's group
+- when: groupname is not defined
+  block:
+    - name: Get passwd DB entry for {{ username }}
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ username }}"
+      register: user_pw
+
+    - name: Get group DB entry for {{ username }}
+      ansible.builtin.getent:
+        database: group
+        key: "{{ user_pw.ansible_facts.getent_passwd[username][2] }}"
+      register: user_gid
+
+    - name: Set groupname fact to {{ user_gid.ansible_facts.getent_group.keys()|first }}
+      set_fact:
+        groupname: "{{ user_gid.ansible_facts.getent_group.keys()|first }}"
+  #
+  # block
+
+# Install packages
+- name: Install google authenticator packages
+  ansible.builtin.apt:
+    state: present
+    update_cache: true
+    install_recommends: no
+    name: "{{ google_auth_packages }}"
+
+#
+# If google_auth_config is defined then use those values to build .google_authenticator etc.
+#
+
+- name: Check for existing /home/{{ username }}/.google_authenticator config
+  ansible.builtin.stat:
+    path: "/home/{{ username }}/.google_authenticator"
+  register: google_auth_config_local
+
+# Only generate a new config if no existing local one
+- when: not google_auth_config_local.stat.exists  # No existing secret
+  block:
+
+    # Create new .google_authenticator from vault config if vault defined
+    - name: Create .google_authenticator file
+      ansible.builtin.copy:
+        content: "{{ google_auth_config | selectattr('name', 'equalto', inventory_hostname) | map(attribute='secret') | first }}"
+        dest: "/home/{{ username }}/.google_authenticator"
+        mode: '0400'
+        owner: "{{ username }}"
+        group: "{{ username }}"
+      when:
+        - google_auth_config != "NEW"               # vault_google_auth_config exists
+        - google_auth_config | selectattr('name', 'equalto', inventory_hostname) | list | length > 0  # vault entry for THIS host exists
+
+    # If no vault config defined, or no entry defined for this hostname
+    - when: google_auth_config == "NEW" or google_auth_config | selectattr('name', 'equalto', inventory_hostname) | list | length == 0
+      block:
+        # Generate secret
+        - name: Generate secret for google authenticator
+          ansible.builtin.command: "/usr/bin/google-authenticator --time-based --disallow-reuse --label=email_{{ inventory_hostname }} --qr-mode=UTF8 --rate-limit=3 --rate-time=30 --secret=/home/{{ username }}/.google_authenticator --window-size=3 --force --quiet"
+          args:
+            creates: "/home/{{ username }}/.google_authenticator"
+          register: google_auth_create
+
+        # Set .google_authenticator to mode 400
+        - name: Set new secret file permissions
+          ansible.builtin.file:
+            path: "/home/{{ username }}/.google_authenticator"
+            owner: "{{ username }}"
+            group: "{{ groupname }}"
+            mode: '0400'
+      #
+      # block no vault config or no entry defined
+  #
+  # block not local config exists
+
+
+#
+# Now we deal with a .google_authernticator, regardless of whether it already existed
+# or was newly created, or was created from a vault config
+#
+- name: Pulling in /home/{{ username }}/.google_authenticator
+  ansible.builtin.slurp:
+    src: "/home/{{ username }}/.google_authenticator"
+  register: google_auth_file
+
+- name: Set google auth config fact
+  ansible.builtin.set_fact:
+    google_auth_config_mine: "{{ google_auth_file['content'] | b64decode }}"
+
+- name: Parse TOTP variable
+  ansible.builtin.set_fact:
+    totp_lines: "{{ google_auth_config_mine.split('\n') | map('trim') | list }}"
+
+- name: Filter valid lines
+  ansible.builtin.set_fact:
+    valid_lines: "{{ totp_lines | reject('search', '^\"') | list }}"
+
+# Main secret must be 16 or 26 chars.  Must be at least 5x scratch codes
+- name: Validate secret and scratch codes
+  ansible.builtin.assert:
+    that:
+      - "valid_lines[0] is defined and valid_lines[0] | length in [16, 26] and valid_lines[0] is match('^[A-Z0-9]+$')"
+      - "valid_lines[1:] | select('match', '^[0-9]{8}$') | list | length >= 5"
+
+    fail_msg: "The TOTP variable does not meet the required structure."
+    success_msg: "The TOTP variable is valid."
+
+- debug:
+    var: google_auth_config_mine
+
+# Capture secret key - GOOGLE_SECRET=$(head -1 .google_authenticator
+- name: Extract Google Authenticator secret key
+  ansible.builtin.set_fact:
+    google_secret_key: "{{ valid_lines[0] }}"
+
+# Capture scratch codes - this creates a var like
+# google_scratch_codes:
+#   - 21528074
+#   - 86134509
+#   - 79251446
+- name: Extract Google Authenticator scratch codes
+  ansible.builtin.set_fact:
+    google_scratch_codes: "{{ valid_lines | select('match', '^[0-9]{8}$') | list }}"
+
+- debug:
+    var: google_secret_key
+- debug:
+    var: google_scratch_codes
+
+# Create QR code
+- name: Create QR code for secret
+  ansible.builtin.command: "/usr/bin/qrencode -m 3 -t UTF8 otpauth://totp/{{ inventory_hostname }}:{{ username }}%3Fsecret={{ google_secret_key }}%3FIssuer={{ inventory_hostname_short }}_mailsys"
+  register: google_auth_qrcode
+
+- debug:
+    msg: "{{ google_auth_qrcode.stdout }}"
+
+
+# Set pam to use google authenticator for ssh
+# echo "auth required pam_google_authenticator.so" >> /etc/pam.d/sshd
+- name: Set pam to use google authenticator for ssh
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/sshd
+    insertafter: EOF
+    line: 'auth required pam_google_authenticator.so'
+    state: present
+
+- name: Modify sshd_config to use google authenticator
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/70-google_auth.conf
+    content: |
+      #
+      # For google authenticator
+      #
+      ChallengeResponseAuthentication yes
+
+- name: Modify sshd_config to force use of google authenticator
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/71-google_auth.conf
+    content: |
+      #
+      # For google authenticator to force use of token always
+      #
+      PasswordAuthentication no
+      # Only when global google_auth_force is true OR specific inventory_hostname has force_auth: true
+  when: google_auth_force == true or google_auth_config | selectattr('name', 'equalto', inventory_hostname) | selectattr('force_auth', 'equalto', true) | list | length > 0
+
+
