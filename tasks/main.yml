@@ -35,6 +35,7 @@
     update_cache: true
     install_recommends: no
     name: "{{ google_auth_packages }}"
+  become: yes
 
 #
 # If google_auth_config is defined then use those values to build .google_authenticator etc.
@@ -146,33 +147,36 @@
     msg: "{{ google_auth_qrcode.stdout }}"
 
 
-# Set pam to use google authenticator for ssh
-# echo "auth required pam_google_authenticator.so" >> /etc/pam.d/sshd
-- name: Set pam to use google authenticator for ssh
-  ansible.builtin.lineinfile:
-    path: /etc/pam.d/sshd
-    insertafter: EOF
-    line: 'auth required pam_google_authenticator.so'
-    state: present
+- become: yes
+  block:
+    # Set pam to use google authenticator for ssh
+    # echo "auth required pam_google_authenticator.so" >> /etc/pam.d/sshd
+    - name: Set pam to use google authenticator for ssh
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/sshd
+        insertafter: EOF
+        line: 'auth required pam_google_authenticator.so'
+        state: present
 
-- name: Modify sshd_config to use google authenticator
-  ansible.builtin.copy:
-    dest: /etc/ssh/sshd_config.d/70-google_auth.conf
-    content: |
-      #
-      # For google authenticator
-      #
-      ChallengeResponseAuthentication yes
+    - name: Modify sshd_config to use google authenticator
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/70-google_auth.conf
+        content: |
+          #
+          # For google authenticator
+          #
+          ChallengeResponseAuthentication yes
 
-- name: Modify sshd_config to force use of google authenticator
-  ansible.builtin.copy:
-    dest: /etc/ssh/sshd_config.d/71-google_auth.conf
-    content: |
-      #
-      # For google authenticator to force use of token always
-      #
-      PasswordAuthentication no
-      # Only when global google_auth_force is true OR specific inventory_hostname has force_auth: true
-  when: google_auth_force == true or google_auth_config | selectattr('name', 'equalto', inventory_hostname) | selectattr('force_auth', 'equalto', true) | list | length > 0
-
+    - name: Modify sshd_config to force use of google authenticator
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/71-google_auth.conf
+        content: |
+          #
+          # For google authenticator to force use of token always
+          #
+          PasswordAuthentication no
+          # Only when global google_auth_force is true OR specific inventory_hostname has force_auth: true
+      when: google_auth_force == true or google_auth_config | selectattr('name', 'equalto', inventory_hostname) | selectattr('force_auth', 'equalto', true) | list | length > 0
+  #
+  # block system file updates
 
