@@ -5,9 +5,12 @@ username: "{{ vault_username | default(ansible_user_id) }}"
 
 # Use google authenticator config from vault if it's there
 # 1st line secret can be 16 or 26 chars
+# NOTE: Be sure to use char encoding for spaces
 # vault_google_auth_config:
 #   - name: host1.example.com
 #     force_auth: false
+#     label: "Mailsys%20{{ inventory_hostname_short }}:{{ username }}"
+#     issuer: "Example%20Corp%20Mailsys"
 #     secret: |
 #       6DRWZ2AWOAFAQMSI
 #       "RATE_LIMIT 3 30
@@ -35,6 +38,11 @@ google_auth_config: "{{ vault_google_auth_config | default('NEW') }}"
 
 # Force use of token even with SSH key
 google_auth_force: false
+
+# Default label and issuer if not defined in vault_google_auth_config for the host(s)
+# NOTE: Be sure to use char encoding for spaces
+google_auth_label: "Example%20{{ inventory_hostname_short }}:{{ username }}"
+google_auth_issuer: "Example%20Inc."
 
 google_auth_packages:
   - libpam-google-authenticator

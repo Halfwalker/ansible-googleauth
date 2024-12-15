@@ -6,7 +6,7 @@ This role is to install google authenticator and integrate it into ssh so that T
 
 It will create a `~/.google_authenticator` if required, and will NOT alter or remove any existing version.
 
-It will update `/etc/ssh/sshd_config.d` to ensure that a token is required for any ssh connection without an ssh key.  Connections _with_ an ssh key will not require a token, though this may be enabled so that tokens are *always* required.  Set the global **google_auth_force** variable to _true_ or an individual host entry (see below) to enable this.
+It will update `/etc/ssh/sshd_config.d` to ensure that a token is required for any ssh connection _without_ an ssh key.  Connections _with_ an ssh key will not require a token, though this may be enabled so that tokens are *always* required.  Set the global **google_auth_force** variable to _true_ or an individual host entry (see below) to enable this.
 
 ## Configuration
 
@@ -16,17 +16,23 @@ To pre-populate the TOTP secret there are two locations to place the information
 * *Much* more preferably place them into an ansible-vault encrypted file under the **vault_google_auth_config** variable.  Typically this might be in `group_vars/all/vault`
 
 The format is as follows
-| Variable | Description |
-| :--- | :--- |
-| name: | The inventory_hostname for this block |
-| force_auth: | force token for ALL ssh connections for this host |
-| secret: | Standard `.google_authenticator` secret info
+| Variable | Description | Required ? |
+| :--- | :--- | :--- |
+| name: | The inventory_hostname for this block | Required |
+| force_auth: | Force token for ALL ssh connections for this host | Optional |
+| label: | Label for the otpauth: url for the QR code | Optional |
+| issuer: | Issuer for the otpauth: url for the QR code | Optional |
+| secret: | Standard `.google_authenticator` secret info | Required |
+
+The Optional keys have default values in `defaults/main.yml`
 
 ```yaml
 # 1st line of secret can be 16 or 26 chars
 vault_google_auth_config:
   - name: host1.example.com
     force_auth: false
+    label: "Mailsys%20{{ inventory_hostname_short }}:{{ username }}"
+    issuer: "Example%20Corp%20Mailsys"
     secret: |
       6DRWZ2AWOAFAQMSI
       "RATE_LIMIT 3 30

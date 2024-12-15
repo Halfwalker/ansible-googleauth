@@ -116,9 +116,6 @@
     fail_msg: "The TOTP variable does not meet the required structure."
     success_msg: "The TOTP variable is valid."
 
-- debug:
-    var: google_auth_config_mine
-
 # Capture secret key - GOOGLE_SECRET=$(head -1 .google_authenticator
 - name: Extract Google Authenticator secret key
   ansible.builtin.set_fact:
@@ -133,16 +130,31 @@
   ansible.builtin.set_fact:
     google_scratch_codes: "{{ valid_lines | select('match', '^[0-9]{8}$') | list }}"
 
+- name: Extract label for {{ inventory_hostname }} if it exists
+  ansible.builtin.set_fact:
+    google_auth_label: "{{ google_auth_config | selectattr('name', 'equalto', inventory_hostname) | map(attribute='label') | first }}"
+  when: >
+    google_auth_config | selectattr('name', 'equalto', inventory_hostname) | list | length > 0 and
+    (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | first).get('label') is not none and
+    (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | first).get('label') != ''
+
+- name: Extract issuer for {{ inventory_hostname }} if it exists
+  ansible.builtin.set_fact:
+    google_auth_issuer: "{{ google_auth_config | selectattr('name', 'equalto', inventory_hostname) | map(attribute='issuer') | first }}"
+  when: >
+    google_auth_config | selectattr('name', 'equalto', inventory_hostname) | list | length > 0 and
+    (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | first).get('issuer') is not none and
+    (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | first).get('issuer') != ''
+
+# Create QR code
+- name: Create QR code for secret
+  ansible.builtin.command: "/usr/bin/qrencode -m 3 -t UTF8 otpauth://totp/{{ google_auth_label }}?secret={{ google_secret_key }}&Issuer={{ google_auth_issuer }}"
+  register: google_auth_qrcode
+
 - debug:
     var: google_secret_key
 - debug:
     var: google_scratch_codes
-
-# Create QR code
-- name: Create QR code for secret
-  ansible.builtin.command: "/usr/bin/qrencode -m 3 -t UTF8 otpauth://totp/{{ inventory_hostname }}:{{ username }}%3Fsecret={{ google_secret_key }}%3FIssuer={{ inventory_hostname_short }}_mailsys"
-  register: google_auth_qrcode
-
 - debug:
     msg: "{{ google_auth_qrcode.stdout }}"
 
@@ -176,7 +188,10 @@
           #
           PasswordAuthentication no
           # Only when global google_auth_force is true OR specific inventory_hostname has force_auth: true
-      when: google_auth_force == true or google_auth_config | selectattr('name', 'equalto', inventory_hostname) | selectattr('force_auth', 'equalto', true) | list | length > 0
+      when: >
+        google_auth_force == true or
+        (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | list | length > 0 and
+        (google_auth_config | selectattr('name', 'equalto', inventory_hostname) | first).get('force_auth') is true)
   #
   # block system file updates
 
